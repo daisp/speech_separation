@@ -1,30 +1,25 @@
-import time
 import argparse
-import math
-import random
-import os
+import copy
 import distutils.util
+import math
+import pickle
+import random
+
+import h5py
+import numpy as np
+import stft
 # uncomment this line to suppress Tensorflow warnings
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
-import numpy as np
-from six.moves import xrange as range
+import time
 from scipy.io import wavfile
-
-from utils import *
-import pdb
+from six.moves import xrange as range
+from stft.types import SpectrogramArray
 from time import gmtime, strftime
 
 from config import Config
-from model import SeparationModel
-import h5py
-from stft.types import SpectrogramArray
-import stft
-
 from evaluate import bss_eval_sources
-import pickle
-
-import copy
+from model import SeparationModel
 
 DIR = 'data/processed/'
 
@@ -33,6 +28,7 @@ INPUT_CLEAN_DIR = 'data/sliced_clean/'
 
 CLEAN_FILE = INPUT_CLEAN_DIR + 'f10_script2_clean_113.wav'
 NOISE_FILE = INPUT_NOISE_DIR + 'noise1_1.wav'
+
 
 def clean_data(data):
     # hack for now so that I don't have to preprocess again
@@ -52,20 +48,21 @@ def clean_data(data):
                     new_data[i][j][k][l]
     return new_data
 
+
 def create_batch(input_data, target_data, batch_size):
     input_batches = []
     target_batches = []
-    
+
     for i in xrange(0, len(target_data), batch_size):
         input_batches.append(input_data[i:i + batch_size])
         target_batches.append(target_data[i:i + batch_size])
-    
+
     return input_batches, target_batches
+
 
 def model_train(freq_weighted):
     logs_path = "tensorboard/" + strftime("%Y_%m_%d_%H_%M_%S", gmtime())
 
-    
     TESTING_MODE = True
 
     data = h5py.File('%sdata%d' % (DIR, 0))['data'].value
@@ -75,8 +72,8 @@ def model_train(freq_weighted):
     combined = combined[0]
     clean = clean[0]
     noise = noise[0]
-    
-    target = np.concatenate((clean,noise), axis=2)
+
+    target = np.concatenate((clean, noise), axis=2)
 
     num_data = len(combined)
     random.seed(1)
@@ -103,7 +100,7 @@ def model_train(freq_weighted):
 
         with tf.Session() as session:
             session.run(init)
-            
+
             # if args.load_from_file is not None:
             #     new_saver = tf.train.import_meta_graph('%s.meta' % args.load_from_file, clear_devices=True)
             #     new_saver.restore(session, args.load_from_file)
@@ -124,10 +121,10 @@ def model_train(freq_weighted):
                     cur_batch_size = len(train_target_batch[batch])
                     total_train_examples += cur_batch_size
 
-                    _, batch_cost, summary = model.train_on_batch(session, 
-                                                            train_input_batch[batch],
-                                                            train_target_batch[batch], 
-                                                            train=True)
+                    _, batch_cost, summary = model.train_on_batch(session,
+                                                                  train_input_batch[batch],
+                                                                  train_target_batch[batch],
+                                                                  train=True)
 
                     total_train_cost += batch_cost * cur_batch_size
                     train_writer.add_summary(summary, step_ii)
@@ -145,10 +142,10 @@ def model_train(freq_weighted):
                     cur_batch_size = len(dev_target_batch[batch])
                     total_batch_examples += cur_batch_size
 
-                    _, _val_batch_cost, _ = model.train_on_batch(session, dev_input_batch[batch], dev_target_batch[batch], train=False)
+                    _, _val_batch_cost, _ = model.train_on_batch(session, dev_input_batch[batch],
+                                                                 dev_target_batch[batch], train=False)
 
                     total_batch_cost += cur_batch_size * _val_batch_cost
-
 
                 val_batch_cost = None
                 try:
@@ -158,7 +155,7 @@ def model_train(freq_weighted):
 
                 log = "Epoch {}/{}, train_cost = {:.3f}, val_cost = {:.3f}, time = {:.3f}"
                 print(
-                log.format(curr_epoch + 1, Config.num_epochs, train_cost, val_batch_cost, time.time() - start))
+                    log.format(curr_epoch + 1, Config.num_epochs, train_cost, val_batch_cost, time.time() - start))
 
                 # if args.print_every is not None and (curr_epoch + 1) % args.print_every == 0:
                 #     batch_ii = 0
@@ -172,7 +169,6 @@ def model_train(freq_weighted):
 
 
 def model_test(test_input):
-
     test_rate, test_audio = wavfile.read(test_input)
     clean_rate, clean_audio = wavfile.read(CLEAN_FILE)
     noise_rate, noise_audio = wavfile.read(NOISE_FILE)
@@ -192,7 +188,7 @@ def model_test(test_input):
     with tf.Graph().as_default():
         model = SeparationModel()
         saver = tf.train.Saver(tf.trainable_variables())
-        
+
         with tf.Session() as session:
             ckpt = tf.train.get_checkpoint_state('checkpoints/')
             if ckpt:
@@ -208,25 +204,26 @@ def model_test(test_input):
             output, _, _ = model.train_on_batch(session, test_data, dummy_target, train=False)
 
             num_freq_bin = output.shape[2] / 2
-            clean_output = output[0,:,:num_freq_bin]
-            noise_output = output[0,:,num_freq_bin:]
+            clean_output = output[0, :, :num_freq_bin]
+            noise_output = output[0, :, num_freq_bin:]
 
             clean_mask, noise_mask = create_mask(clean_output, noise_output)
 
-            clean_spec = createSpectrogram(np.multiply(clean_mask.transpose(), test_spec), test_spec.stft_settings) 
+            clean_spec = createSpectrogram(np.multiply(clean_mask.transpose(), test_spec), test_spec.stft_settings)
             noise_spec = createSpectrogram(np.multiply(noise_mask.transpose(), test_spec), test_spec.stft_settings)
 
             clean_wav = stft.ispectrogram(clean_spec)
             noise_wav = stft.ispectrogram(noise_spec)
 
-            sdr, sir, sar, _ = bss_eval_sources(np.array([reverted_clean, reverted_noise]), np.array([clean_wav, noise_wav]), False)
+            sdr, sir, sar, _ = bss_eval_sources(np.array([reverted_clean, reverted_noise]),
+                                                np.array([clean_wav, noise_wav]), False)
             print(sdr, sir, sar)
 
             writeWav('data/test_combined/output_clean.wav', 44100, clean_wav)
             writeWav('data/test_combined/output_noise.wav', 44100, noise_wav)
 
-def model_batch_test():
 
+def model_batch_test():
     test_batch = h5py.File('%stest_batch' % (DIR))
     data = test_batch['data'].value
 
@@ -234,12 +231,12 @@ def model_batch_test():
         settings = pickle.load(f)
 
     # print(settings[:2])
-    
+
     combined, clean, noise = zip(data)
     combined = combined[0]
     clean = clean[0]
     noise = noise[0]
-    target = np.concatenate((clean,noise), axis=2)
+    target = np.concatenate((clean, noise), axis=2)
 
     # test_rate, test_audio = wavfile.read('data/test_combined/combined.wav')
     # test_spec = stft.spectrogram(test_audio)
@@ -251,7 +248,7 @@ def model_batch_test():
     with tf.Graph().as_default():
         model = SeparationModel()
         saver = tf.train.Saver(tf.trainable_variables())
-        
+
         with tf.Session() as session:
             ckpt = tf.train.get_checkpoint_state('checkpoints/')
             if ckpt:
@@ -271,8 +268,8 @@ def model_batch_test():
                 output, _, _ = model.train_on_batch(session, combined_batch[0], target_batch[0], train=False)
 
                 num_freq_bin = output.shape[2] / 2
-                clean_outputs = output[:,:,:num_freq_bin]
-                noise_outputs = output[:,:,num_freq_bin:]
+                clean_outputs = output[:, :, :num_freq_bin]
+                noise_outputs = output[:, :, num_freq_bin:]
 
                 # clean = [target[:,:num_freq_bin] for target in target_batch]
                 # noise = [target[:,num_freq_bin:] for target in target_batch]
@@ -296,11 +293,15 @@ def model_batch_test():
 
                     curr_mask_array.append(clean_mask)
                     # if i == 0:
-                        # print clean_mask[10:20,10:20]
+                    # print clean_mask[10:20,10:20]
                     curr_mask_array.append(noise_mask)
 
-                    clean_spec = createSpectrogram(np.multiply(clean_mask.transpose(), original_combined_batch[0][i][-orig_length:].transpose()), settings[i])
-                    noise_spec = createSpectrogram(np.multiply(noise_mask.transpose(), original_combined_batch[0][i][-orig_length:].transpose()), settings[i])
+                    clean_spec = createSpectrogram(
+                        np.multiply(clean_mask.transpose(), original_combined_batch[0][i][-orig_length:].transpose()),
+                        settings[i])
+                    noise_spec = createSpectrogram(
+                        np.multiply(noise_mask.transpose(), original_combined_batch[0][i][-orig_length:].transpose()),
+                        settings[i])
 
                     # print '-' * 20
                     # print original_combined_batch[0][i]
@@ -314,18 +315,21 @@ def model_batch_test():
                     estimated_clean_wav = stft.ispectrogram(clean_spec)
                     estimated_noise_wav = stft.ispectrogram(noise_spec)
 
-                    reference_clean_wav = stft.ispectrogram(SpectrogramArray(clean[i][-orig_length:], stft_settings).transpose())
-                    reference_noise_wav = stft.ispectrogram(SpectrogramArray(noise[i][-orig_length:], stft_settings).transpose())
+                    reference_clean_wav = stft.ispectrogram(
+                        SpectrogramArray(clean[i][-orig_length:], stft_settings).transpose())
+                    reference_noise_wav = stft.ispectrogram(
+                        SpectrogramArray(noise[i][-orig_length:], stft_settings).transpose())
 
                     try:
-                        sdr, sir, sar, _ = bss_eval_sources(np.array([reference_clean_wav, reference_noise_wav]), np.array([estimated_clean_wav, estimated_noise_wav]), False)
+                        sdr, sir, sar, _ = bss_eval_sources(np.array([reference_clean_wav, reference_noise_wav]),
+                                                            np.array([estimated_clean_wav, estimated_noise_wav]), False)
                         results.append((sdr[0], sdr[1], sir[0], sir[1], sar[0], sar[1]))
                         # print('%f, %f, %f, %f, %f, %f' % (sdr[0], sdr[1], sir[0], sir[1], sar[0], sar[1]))
                     except ValueError:
                         print('error')
                         continue
                 break
-                
+
                 # diff = 1
                 # if prev_mask_array is not None:
                 #     # print curr_mask_array[0]
@@ -374,23 +378,24 @@ def create_mask(clean_output, noise_output, hard=True):
                 clean_mask[i][j] = abs(clean_output[i][j]) / (abs(clean_output[i][j]) + abs(noise_output[i][j]))
                 noise_mask[i][j] = abs(noise_output[i][j]) / (abs(clean_output[i][j]) + abs(noise_output[i][j]))
 
-
     return clean_mask, noise_mask
+
 
 def createSpectrogram(arr, settings):
     x = SpectrogramArray(arr, stft_settings={
-                                'framelength': settings['framelength'],
-                                'hopsize': settings['hopsize'],
-                                'overlap': settings['overlap'],
-                                'centered': settings['centered'],
-                                'window': settings['window'],
-                                'halved': settings['halved'],
-                                'transform': settings['transform'],
-                                'padding': settings['padding'],
-                                'outlength': settings['outlength'],
-                                }
-                        )
+        'framelength': settings['framelength'],
+        'hopsize': settings['hopsize'],
+        'overlap': settings['overlap'],
+        'centered': settings['centered'],
+        'window': settings['window'],
+        'halved': settings['halved'],
+        'transform': settings['transform'],
+        'padding': settings['padding'],
+        'outlength': settings['outlength'],
+    }
+                         )
     return x
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -406,4 +411,3 @@ if __name__ == "__main__":
         model_train(args.freq_weighted)
     else:
         model_test(args.test_single_input)
-

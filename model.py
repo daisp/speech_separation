@@ -3,22 +3,16 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import time
-import argparse
 import math
-import random
-import os
+
+import numpy as np
 # uncomment this line to suppress Tensorflow warnings
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
-import numpy as np
 from six.moves import xrange as range
 
-from utils import *
-import pdb
-from time import gmtime, strftime
-
 from config import Config
+
 
 class SeparationModel():
     """
@@ -51,7 +45,8 @@ class SeparationModel():
 
         (Don't change the variable names)
         """
-        self.inputs_placeholder = tf.placeholder(tf.float32, shape=(None, None, Config.num_final_features), name='inputs')
+        self.inputs_placeholder = tf.placeholder(tf.float32, shape=(None, None, Config.num_final_features),
+                                                 name='inputs')
         self.targets_placeholder = tf.placeholder(tf.float32, shape=(None, None, Config.output_size), name='targets')
 
     def create_feed_dict(self, inputs_batch, targets_batch):
@@ -73,7 +68,7 @@ class SeparationModel():
             seq_lens_batch: A batch of seq_lens data.
         Returns:
             feed_dict: The feed dictionary mapping from placeholders to values.
-        """        
+        """
         feed_dict = {
             self.inputs_placeholder: inputs_batch,
             self.targets_placeholder: targets_batch,
@@ -101,10 +96,12 @@ class SeparationModel():
         cell_bw = None
         if Config.num_layers > 1:
             # multi layer
-            cell = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.GRUCell(Config.output_size, 
-            input_size=Config.num_final_features) for _ in range(Config.num_layers)], state_is_tuple=False)
-            cell_bw = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.GRUCell(Config.output_size, 
-            input_size=Config.num_final_features) for _ in range(Config.num_layers)], state_is_tuple=False)
+            cell = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.GRUCell(Config.output_size,
+                                                                       input_size=Config.num_final_features) for _ in
+                                                range(Config.num_layers)], state_is_tuple=False)
+            cell_bw = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.GRUCell(Config.output_size,
+                                                                          input_size=Config.num_final_features) for _ in
+                                                   range(Config.num_layers)], state_is_tuple=False)
         else:
             cell = tf.contrib.rnn.GRUCell(Config.output_size, input_size=Config.num_final_features)
             cell_bw = tf.contrib.rnn.GRUCell(Config.output_size, input_size=Config.num_final_features)
@@ -115,10 +112,9 @@ class SeparationModel():
 
         # output_seq_length = tf.shape(output)[1]
         # last_output = output[:,output_seq_length - 1,:]
-        
+
         self.output = output
         # self.output = tf.Print(self.output, [self.output, tf.shape(self.output)])
-
 
     def add_loss_op(self, freq_weighted):
         l2_cost = 0.0
@@ -127,8 +123,10 @@ class SeparationModel():
 
         num_freq_bins = Config.num_final_features
         frequencies = np.array([2.0 * 180 * i / (num_freq_bins - 1) * 22050 / 360 for i in xrange(num_freq_bins)])
-        frequencies[0] = 2.0 * 180 / (num_freq_bins - 1) / 2 * 22050 / 360  # 0th frequency threshold is computed at 3/4th of the frequency range
-        ath_val = 3.64 * np.power(1000 / frequencies, 0.8) - 6.5 * np.exp(-0.6 * np.power(frequencies / 1000 - 3.3, 2)) + np.power(0.1, 3) * np.power(frequencies / 1000, 4)
+        frequencies[0] = 2.0 * 180 / (
+                num_freq_bins - 1) / 2 * 22050 / 360  # 0th frequency threshold is computed at 3/4th of the frequency range
+        ath_val = 3.64 * np.power(1000 / frequencies, 0.8) - 6.5 * np.exp(
+            -0.6 * np.power(frequencies / 1000 - 3.3, 2)) + np.power(0.1, 3) * np.power(frequencies / 1000, 4)
 
         ath_shifted = (1 - np.amin(ath_val)) + ath_val  # shift all ath vals so that min is 1
         weights = np.tile(1 / ath_shifted, 2)
@@ -158,19 +156,18 @@ class SeparationModel():
         Use tf.train.AdamOptimizer for this model. Call optimizer.minimize() on self.loss. 
 
         """
-        optimizer = None 
+        optimizer = None
 
         ### YOUR CODE HERE (~1-2 lines)
         optimizer = tf.train.AdamOptimizer(learning_rate=Config.lr).minimize(self.loss)
         ### END YOUR CODE
-        
+
         self.optimizer = optimizer
 
     def add_summary_op(self):
         self.merged_summary_op = tf.summary.merge_all()
 
-
-    # This actually builds the computational graph 
+    # This actually builds the computational graph
     def build(self, freq_weighted):
         self.add_placeholders()
         self.add_prediction_op()
@@ -178,12 +175,11 @@ class SeparationModel():
         self.add_training_op()
         self.add_summary_op()
 
-
     def train_on_batch(self, session, train_inputs_batch, train_targets_batch, train=True):
         feed = self.create_feed_dict(train_inputs_batch, train_targets_batch)
         output, batch_cost, summary = session.run([self.output, self.loss, self.merged_summary_op], feed)
 
-        if math.isnan(batch_cost): # basically all examples in this batch have been skipped 
+        if math.isnan(batch_cost):  # basically all examples in this batch have been skipped
             return 0
         if train:
             _ = session.run([self.optimizer], feed)
@@ -193,10 +189,7 @@ class SeparationModel():
     def print_results(self, train_inputs_batch, train_targets_batch):
         train_feed = self.create_feed_dict(train_inputs_batch, train_targets_batch)
         train_first_batch_preds = session.run(self.decoded_sequence, feed_dict=train_feed)
-        compare_predicted_to_true(train_first_batch_preds, train_targets_batch)        
+        compare_predicted_to_true(train_first_batch_preds, train_targets_batch)
 
     def __init__(self, freq_weighted=None):
         self.build(freq_weighted)
-
-    
-
